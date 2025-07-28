@@ -6,7 +6,8 @@ import telebot
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
@@ -25,31 +26,28 @@ WAIT_TIMEOUT = 120        # Таймаут ожидания элементов �
 bot = telebot.TeleBot(BOT_TOKEN)
 last_message = None       # Для отслеживания последнего отправленного сообщения
 
+URLS_TO_CHECK = [
+    "https://urfu.ru/ru/ratings-today/",
+    "https://www.dvfu.ru/admission/spd/"
+]
 
-def check_page_access():
-    """
-    Проверяет доступность страницы по URL.
-    Возвращает True, если код ответа 200, иначе False.
-    """
-    try:
-        r = requests.get(URL, headers=HEADERS, timeout=10)
-        print(f"HTTP Status Code: {r.status_code}")
-        return r.status_code == 200
-    except Exception as e:
-        print("Ошибка при доступе к странице:", e)
-        return False
-
+def check_pages_access(urls):
+    all_ok = True
+    for url in urls:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            print(f"HTTP Status Code for {url}: {r.status_code}")
+            if r.status_code != 200:
+                print(f"❌ Страница {url} недоступна")
+                all_ok = False
+        except Exception as e:
+            print(f"Ошибка при доступе к странице {url}: {e}")
+            all_ok = False
+    return all_ok
 
 def parse_with_selenium():
-    """
-    Использует Selenium для загрузки страницы,
-    кликает по нужному институту и форме обучения,
-    ожидает появления ID абитуриента на странице,
-    и возвращает HTML-код страницы.
-    При неудаче повторяет попытки до MAX_RETRIES раз.
-    """
     chrome_options = Options()
-    chrome_options.add_argument('--headless')  # Запуск без GUI
+    chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
 
@@ -57,14 +55,12 @@ def parse_with_selenium():
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
     html = None
-
     try:
         for attempt in range(1, MAX_RETRIES + 1):
             print(f"[INFO] Попытка загрузки страницы #{attempt}")
             driver.get(URL)
 
             try:
-                # Ждём таблицу с институтами
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.menu-departments")))
                 rows = driver.find_elements(By.CSS_SELECTOR, "table.menu-departments tr")
 
@@ -88,7 +84,6 @@ def parse_with_selenium():
                     print("❌ Институт/форма обучения не найдены.")
                     continue
 
-                # Ждём появления ID абитуриента
                 wait.until(EC.presence_of_element_located((By.XPATH, f"//td[text()='{USER_UNIQUE_ID}']")))
                 print("✅ ID абитуриента найден на странице")
                 html = driver.page_source
@@ -103,13 +98,7 @@ def parse_with_selenium():
 
     return html
 
-
 def find_user_info(html):
-    """
-    Парсит HTML страницы BeautifulSoup, ищет таблицы с данными,
-    извлекает информацию по абитуриенту: позиция, согласие, приоритет,
-    баллы, план приёма, направление и статус прохождения.
-    """
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.select("table.supp")
 
@@ -127,7 +116,6 @@ def find_user_info(html):
         except Exception:
             pass
 
-        # Получаем направление (образовательную программу)
         try:
             direction = header.find("th", string=re.compile("Направление")).find_next_sibling("td").text.strip()
         except Exception:
@@ -135,7 +123,7 @@ def find_user_info(html):
 
         if i + 1 < len(tables):
             data_table = tables[i + 1]
-            rows = data_table.find_all("tr")[1:]  # Пропускаем заголовок
+            rows = data_table.find_all("tr")[1:]
             for pos, row in enumerate(rows, start=1):
                 cols = row.find_all("td")
                 if len(cols) < 2:
@@ -156,16 +144,126 @@ def find_user_info(html):
                     }
                     return user_info
     return None
+DIRECTIONS_TO_CHECK = [
+    "58.03.01 Востоковедение и африканистика",
+    "45.05.01 Перевод и переводоведение",
+    "45.03.02 Лингвистика (Перевод и переводоведение (европейские языки))",
+    "41.03.01 Зарубежное регионоведение",
+    "45.03.02 Лингвистика (Перевод и лингвопереводческие технологии (английский и китайский языки))",
+    "45.03.02 Лингвистика (Межкультурная коммуникация (английский и китайский языки))",
+    "44.03.05 Педагогическое образование (с двумя профилями подготовки) (Иностранный язык (английский) и Иностранный язык (корейский))",
+    "44.03.05 Педагогическое образование (с двумя профилями подготовки) (Иностранный язык (английский) и Иностранный язык (китайский))",
+]
+
+def dvfu_check_all_directions(driver, wait, user_id):
+    all_messages = []
+
+    for direction_to_select in DIRECTIONS_TO_CHECK:
+        try:
+            driver.get("https://www.dvfu.ru/admission/spd/")
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
+
+            for i in range(5):
+                wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")) >= i + 1)
+                selects = driver.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")
+
+                if i == 0:
+                    Select(selects[i]).select_by_visible_text("Бакалавриат/Специалитет")
+                elif i == 1:
+                    Select(selects[i]).select_by_visible_text("Бюджет")
+                elif i == 2:
+                    Select(selects[i]).select_by_visible_text("Очная")
+                elif i == 3:
+                    Select(selects[i]).select_by_visible_text(direction_to_select)
+                elif i == 4:
+                    Select(selects[i]).select_by_visible_text("По приоритету")
+
+            driver.find_element(By.CSS_SELECTOR, "input.btn.btn-primary[value='Показать']").click()
+            WebDriverWait(driver, WAIT_TIMEOUT).until(lambda d: "Общий конкурс" in d.page_source)
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+
+            quota_number = 0
+            quota_header = soup.find("h4", string="Общий конкурс")
+            if quota_header:
+                small = quota_header.find_next("small")
+                quota_text = small.get_text() if small else ""
+                match = re.search(r"Квота:\s*(\d+)", quota_text)
+                if match:
+                    quota_number = int(match.group(1))
+
+            td_list = soup.select("td.text-left")
+            my_index = None
+            passed_count = 0
+
+            for i, td in enumerate(td_list):
+                if user_id in td.text:
+                    my_index = i
+                    break
+
+            if my_index is None:
+                continue
+
+            for td in td_list[:my_index]:
+                collapse = td.find("div", class_="collapse")
+                if collapse and all(s in collapse.text for s in [
+                    "Согласие на зачисление: Да",
+                    "Основной высший приоритет: Да",
+                    "Проходной высший приоритет: Да"
+                ]):
+                    passed_count += 1
+
+            position = passed_count + 1
+
+            user_td = td_list[my_index]
+            collapse = user_td.find("div", class_="collapse")
+            consent = "Нет"
+            priority = "Неизвестно"
+            score = "Неизвестно"
+
+            if collapse:
+                paragraphs = collapse.find_all("p")
+                for p in paragraphs:
+                    text = p.get_text(strip=True)
+                    if "Согласие на зачисление" in text:
+                        consent = "Да" if "Да" in text else "Нет"
+                    elif "Сумма баллов" in text:
+                        score_match = re.search(r"(\d+)", text)
+                        if score_match:
+                            score = score_match.group(1)
+                    elif "Приоритет" in text:
+                        prio_match = re.search(r"(\d+)", text)
+                        if prio_match:
+                            priority = prio_match.group(1)
+
+            message = (
+                f"📊 ДВФУ Рейтинг\n"
+                f"ID: {user_id}\n"
+                f"🏫 Направление: {direction_to_select}\n\n"
+                f"📍 Позиция: {position} / {quota_number}\n"
+                f"📩 Согласие: {consent}\n"
+                f"📝 Приоритет: {priority}\n"
+                f"🏆 Баллы: {score}\n"
+            )
+
+            if position <= quota_number:
+                message += "🎉 Поздравляю! Ты поступил!"
+            else:
+                message += f"⏳ До прохода не хватает: {position - quota_number}"
+
+            all_messages.append(message)
+
+        except Exception as e:
+            print(f"[DVFU] ❌ Ошибка при направлении {direction_to_select}:", e)
+
+    full_message = "\n\n".join(all_messages)
+    if full_message:
+        bot.send_message(USER_CHAT_ID, full_message)
 
 
 def send_telegram(info):
-    """
-    Формирует и отправляет сообщение в Telegram,
-    если информация изменилась с прошлого раза.
-    """
     global last_message
     inside_str = "✅ ВХОДИТ В КОНКУРС!" if info['inside'] else "❌ НЕ ВХОДИТ в конкурс"
-
     message = (
         f"📊 УРФУ Рейтинг\n"
         f"ID: {USER_UNIQUE_ID}\n"
@@ -176,7 +274,6 @@ def send_telegram(info):
         f"🏆 Баллы: {info['score']}\n"
         f"{inside_str}"
     )
-
     if info['inside']:
         message += "\n🎉 Поздравляю! Ты поступил!"
 
@@ -187,37 +284,46 @@ def send_telegram(info):
     else:
         print("[INFO] Без изменений — сообщение не отправлялось.")
 
-
 def run():
-    """
-    Главный цикл работы бота.
-    Проверяет доступность сайта,
-    запускает парсинг и отправляет уведомления раз в час.
-    """
-    print("[INFO] Запуск проверки УРФУ...")
-    while True:
-        try:
-            if not check_page_access():
-                time.sleep(300)  # Если сайт недоступен — ждём 5 минут
-                continue
+    print("[INFO] Запуск проверки УРФУ и ДВФУ...")
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
 
-            html = parse_with_selenium()
-            if not html:
-                print("❌ Не удалось загрузить страницу с результатами.")
-                time.sleep(300)
-                continue
+    service = ChromeService()
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
-            user_info = find_user_info(html)
-            if user_info:
-                send_telegram(user_info)
-            else:
-                print("⚠️ Абитуриент не найден в таблице.")
-                bot.send_message(USER_CHAT_ID, "⚠️ Абитуриент не найден в таблице.")
-        except Exception as e:
-            print("[ERROR]", e)
+    try:
+        while True:
+            try:
+                if not check_pages_access(URLS_TO_CHECK):
+                    print("[WARNING] Один или несколько сайтов недоступны. Ждём 5 минут...")
+                    time.sleep(300)
+                    continue
 
-        time.sleep(3600)  # Запускать раз в час
+                html = parse_with_selenium()
+                if not html:
+                    print("❌ Не удалось загрузить страницу с результатами УрФУ.")
+                    time.sleep(300)
+                    continue
 
+                user_info = find_user_info(html)
+                if user_info:
+                    send_telegram(user_info)
+                    dvfu_check_all_directions(driver, wait, USER_UNIQUE_ID)
+                else:
+                    print("⚠️ Абитуриент не найден в таблице УрФУ.")
+                    bot.send_message(USER_CHAT_ID, "⚠️ Абитуриент не найден в таблице УрФУ.")
+            except Exception as e:
+                print("[ERROR]", e)
+
+            time.sleep(3600)
+
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
     run()
+
