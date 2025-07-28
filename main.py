@@ -206,15 +206,15 @@ def dvfu_check_all_directions(driver, wait, user_id):
 
             for td in td_list[:my_index]:
                 collapse = td.find("div", class_="collapse")
-                if collapse and all(s in collapse.text for s in [
-                    "Согласие на зачисление: Да",
-                    "Основной высший приоритет: Да",
-                    "Проходной высший приоритет: Да"
-                ]):
-                    passed_count += 1
+                if collapse:
+                    text = collapse.get_text()
+                    # Новая логика: достаточно, чтобы было "Согласие: Да" и "Проходной ВП: Да"
+                    if "Согласие на зачисление: Да" in text and "Проходной высший приоритет: Да" in text:
+                        passed_count += 1
 
             position = passed_count + 1
 
+            # Информация о пользователе
             user_td = td_list[my_index]
             collapse = user_td.find("div", class_="collapse")
             consent = "Нет"
