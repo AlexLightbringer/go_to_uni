@@ -145,8 +145,8 @@ def find_user_info(html):
                     return user_info
     return None
 DIRECTIONS_TO_CHECK = [
-    "58.03.01 Востоковедение и африканистика",
     "45.05.01 Перевод и переводоведение",
+    "58.03.01 Востоковедение и африканистика",
     "45.03.02 Лингвистика (Перевод и переводоведение (европейские языки))",
     "41.03.01 Зарубежное регионоведение",
     "45.03.02 Лингвистика (Перевод и лингвопереводческие технологии (английский и китайский языки))",
@@ -156,67 +156,113 @@ DIRECTIONS_TO_CHECK = [
 ]
 
 def dvfu_check_all_directions(driver, wait, user_id):
+
     all_messages = []
 
     for direction_to_select in DIRECTIONS_TO_CHECK:
         try:
+            print(f"[DVFU] 🔍 Проверка направления: {direction_to_select}")
             driver.get("https://www.dvfu.ru/admission/spd/")
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
 
+            # Обновлённая логика селектов — пошаговая загрузка
             for i in range(5):
                 wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")) >= i + 1)
                 selects = driver.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")
 
                 if i == 0:
                     Select(selects[i]).select_by_visible_text("Бакалавриат/Специалитет")
+                    print("✅ Выбрано: Бакалавриат/Специалитет")
                 elif i == 1:
                     Select(selects[i]).select_by_visible_text("Бюджет")
+                    print("✅ Выбрано: Бюджет")
                 elif i == 2:
                     Select(selects[i]).select_by_visible_text("Очная")
+                    print("✅ Выбрано: Очная")
                 elif i == 3:
                     Select(selects[i]).select_by_visible_text(direction_to_select)
+                    print(f"✅ Выбрано направление: {direction_to_select}")
                 elif i == 4:
-                    Select(selects[i]).select_by_visible_text("По приоритету")
+                    Select(selects[i]).select_by_visible_text("По сумме баллов")
+                    print("✅ Сортировка: По сумме баллов")
 
             driver.find_element(By.CSS_SELECTOR, "input.btn.btn-primary[value='Показать']").click()
-            WebDriverWait(driver, WAIT_TIMEOUT).until(lambda d: "Общий конкурс" in d.page_source)
+            wait.until(lambda d: "Общий конкурс" in d.page_source)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
+            # Поиск строки с заголовком "Общий конкурс"
+            block_row = soup.find("tr", class_="block-header")
+            while block_row:
+                h4 = block_row.find("h4")
+                if h4 and h4.get_text(strip=True) == "Общий конкурс":
+                    break
+                block_row = block_row.find_next("tr", class_="block-header")
+            else:
+                print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {direction_to_select}")
+                continue
+
+            # Квота
             quota_number = 0
-            quota_header = soup.find("h4", string="Общий конкурс")
-            if quota_header:
-                small = quota_header.find_next("small")
-                quota_text = small.get_text() if small else ""
+            small = block_row.find("small")
+            if small:
+                quota_text = small.get_text()
                 match = re.search(r"Квота:\s*(\d+)", quota_text)
                 if match:
                     quota_number = int(match.group(1))
 
-            td_list = soup.select("td.text-left")
+            # Следующая таблица после заголовка
+            table = block_row.find_next_sibling("tr")
+            while table and not table.find_all("td"):
+                table = table.find_next_sibling("tr")
+
+            if not table:
+                print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {direction_to_select}")
+                continue
+
+            # Найдём все строки до следующего заголовка
+            data_rows = []
+            row = table
+            while row and not row.get("class") == ["block-header"]:
+                if row.find("td", class_="text-left"):
+                    data_rows.append(row)
+                row = row.find_next_sibling("tr")
+
+            td_list = [r.find("td", class_="text-left") for r in data_rows if r.find("td", class_="text-left")]
+            my_row = None
             my_index = None
             passed_count = 0
 
-            for i, td in enumerate(td_list):
-                if user_id in td.text:
+            for i, r in enumerate(data_rows):
+                td = r.find("td", class_="text-left")
+                if td and user_id in td.text:
+                    my_row = r
                     my_index = i
                     break
 
-            if my_index is None:
+            if my_row is None:
+                print(f"[DVFU] ❌ Абитуриент с ID {user_id} не найден в 'Общий конкурс'")
                 continue
 
-            for td in td_list[:my_index]:
-                collapse = td.find("div", class_="collapse")
+            # 🎯 Исправленное определение позиции — по первой ячейке (номер строки в таблице)
+            position_td = my_row.find("td")
+            if position_td and position_td.text.strip().isdigit():
+                position = int(position_td.text.strip())
+                print(f"[DVFU] ✅ Абитуриент найден в таблице: позиция {position}")
+            else:
+                print("[DVFU] ⚠️ Не удалось определить позицию по порядковому номеру")
+                position = my_index + 1
+
+            # Подсчёт количества людей с согласием и высшим приоритетом до абитуриента
+            for r in data_rows[:my_index]:
+                collapse = r.find("div", class_="collapse")
                 if collapse:
                     text = collapse.get_text()
-                    # Новая логика: достаточно, чтобы было "Согласие: Да" и "Проходной ВП: Да"
                     if "Согласие на зачисление: Да" in text and "Проходной высший приоритет: Да" in text:
                         passed_count += 1
 
-            position = passed_count + 1
-
-            # Информация о пользователе
-            user_td = td_list[my_index]
-            collapse = user_td.find("div", class_="collapse")
+            user_td = my_row.find("td", class_="text-left")
+            collapse = user_td.find("div", class_="collapse") if user_td else None
             consent = "Нет"
             priority = "Неизвестно"
             score = "Неизвестно"
@@ -240,22 +286,23 @@ def dvfu_check_all_directions(driver, wait, user_id):
                 f"📊 ДВФУ Рейтинг\n"
                 f"ID: {user_id}\n"
                 f"🏫 Направление: {direction_to_select}\n\n"
-                f"📍 Позиция: {position} / {quota_number}\n"
+                f"📍 Позиция: {passed_count} / {quota_number}\n"
                 f"📩 Согласие: {consent}\n"
                 f"📝 Приоритет: {priority}\n"
                 f"🏆 Баллы: {score}\n"
             )
 
-            if position <= quota_number:
-                message += "🎉 Поздравляю! Ты поступил!"
+            if passed_count < quota_number:
+                message += f"🎉 Поздравляю! Ты проходишь! До тебя занято мест: {passed_count - 1} из {quota_number}"
             else:
-                message += f"⏳ До прохода не хватает: {position - quota_number}"
+                message += f"⏳ Пока не проходишь. До тебя уже занято мест: {passed_count} из {quota_number}"
 
             all_messages.append(message)
 
         except Exception as e:
             print(f"[DVFU] ❌ Ошибка при направлении {direction_to_select}:", e)
 
+    # Telegram
     full_message = "\n\n".join(all_messages)
     if full_message:
         bot.send_message(USER_CHAT_ID, full_message)
