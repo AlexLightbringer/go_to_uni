@@ -338,7 +338,8 @@ def run():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
 
-    service = ChromeService()
+    # 🔧 Используем ChromeDriverManager для Railway
+    service = ChromeService(executable_path=ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
