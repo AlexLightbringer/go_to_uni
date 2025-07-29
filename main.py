@@ -7,7 +7,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
@@ -46,7 +45,7 @@ def check_pages_access(urls):
             all_ok = False
     return all_ok
 
-def parse_with_selenium():
+def parse_urfu_today(driver, wait, user_id):
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
@@ -311,7 +310,9 @@ def dvfu_check_all_majors(driver, wait, user_id):
     full_message = "\n\n".join(all_messages)
     if full_message:
         for chat_id in USER_CHAT_IDS:
-            bot.send_message(chat_id, ...)
+            bot.send_message(chat_id, full_message)
+
+    return all_messages
 
 
 def send_telegram(info):
@@ -332,7 +333,7 @@ def send_telegram(info):
 
     if message != last_message:
         for chat_id in USER_CHAT_IDS:
-            bot.send_message(chat_id, ...)
+            bot.send_message(chat_id, message)
         print("[INFO] Отправлено сообщение в Telegram.")
         last_message = message
     else:
@@ -470,58 +471,54 @@ def parse_urfu_all_majors(driver, wait, user_id):
 
 
 def run():
-    print("[INFO] Запуск проверки рейтингов УрФУ и ДВФУ...")
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    # Проверка доступности сайтов
+    urls = [
+        "https://www.dvfu.ru/admission/spd/",
+        "https://urfu.ru/ru/ratings/",
+        "https://urfu.ru/ru/ratings-today/"
+    ]
+    check_pages_access(urls)
 
-    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
-    wait = WebDriverWait(driver, WAIT_TIMEOUT)
+    # Инициализация драйвера
+    options = webdriver.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    wait = WebDriverWait(driver, 15)
 
     try:
-        while True:
-            try:
-                if not check_pages_access(URLS_TO_CHECK):
-                    print("[WARNING] Один или несколько сайтов недоступны. Повторим через 5 минут...")
-                    time.sleep(300)
-                    continue
+        # Собираем все сообщения
+        all_messages = []
 
-                # 1. Основной рейтинг УрФУ (https://urfu.ru/ru/ratings-today/)
-                html = parse_with_selenium()
-                if not html:
-                    print("❌ Не удалось загрузить страницу рейтинга УрФУ.")
-                else:
-                    user_info = find_user_info(html)
-                    if user_info:
-                        send_telegram(user_info)
-                    else:
-                        print("⚠️ Абитуриент не найден на https://urfu.ru/ru/ratings-today/")
-                        for chat_id in USER_CHAT_IDS:
-                            bot.send_message(chat_id, "⚠️ Абитуриент не найден в таблице УрФУ (основной рейтинг).")
+        print("▶️ Запуск проверки направлений ДВФУ...")
+        dvfu_messages = dvfu_check_all_majors(driver, wait, USER_UNIQUE_ID) or []
+        all_messages.extend(dvfu_messages)
 
-                # 2. Проверка всех направлений УрФУ (https://urfu.ru/ru/ratings/)
-                print("[INFO] Проверка всех направлений УрФУ...")
-                urfu_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID)
-                if urfu_messages:
-                    print(f"[INFO] Найдено направлений УрФУ: {len(urfu_messages)}")
-                    for chat_id in USER_CHAT_IDS:
-                        bot.send_message(chat_id, "\n\n".join(urfu_messages))
-                else:
-                    print("[INFO] Абитуриент не найден ни в одном направлении на https://urfu.ru/ru/ratings/")
+        print("▶️ Запуск проверки УрФУ (основной рейтинг)...")
+        urfu_all_majors_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID)
+        all_messages.extend(urfu_all_majors_messages)
 
-                # 3. Проверка направлений ДВФУ
-                print("[INFO] Проверка направлений ДВФУ...")
-                dvfu_check_all_majors(driver, wait, USER_UNIQUE_ID)
+        print("▶️ Запуск проверки УрФУ (оперативный рейтинг)...")
+        urfu_today_messages = parse_urfu_today(driver, wait, USER_UNIQUE_ID)
+        all_messages.extend(urfu_today_messages)
 
-            except Exception as e:
-                print("[ERROR] В ходе проверки возникла ошибка:", e)
+        if not all_messages:
+            print("❌ Ни один рейтинг не содержит нужного ID.")
+        else:
+            print(f"📬 Всего сообщений к отправке: {len(all_messages)}")
+            for msg in all_messages:
+                for chat_id in USER_CHAT_IDS:
+                    try:
+                        bot.send_message(chat_id, msg)
+                    except Exception as e:
+                        print(f"❌ Ошибка при отправке в чат {chat_id}: {e}")
 
-            print("[INFO] Ожидание следующего запуска через 1 час...")
-            time.sleep(3600)
-
+    except Exception as e:
+        print("❌ Общая ошибка во время выполнения run():", e)
     finally:
         driver.quit()
+
 
 
 if __name__ == "__main__":
