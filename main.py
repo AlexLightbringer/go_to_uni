@@ -96,7 +96,27 @@ def parse_urfu_today(driver, wait, user_id):
     finally:
         driver.quit()
 
-    return html
+    if not html:
+        return []
+
+    info = find_user_info(html)
+    if info:
+        msg = (
+            f"📊 УРФУ Оперативный рейтинг\n"
+            f"ID: {info['id'] if 'id' in info else user_id}\n"
+            f"🏫 Направление: {info['direction']}\n\n"
+            f"📍 Позиция: {info['position']} / {info['plan']}\n"
+            f"📩 Согласие: {info['consent']}\n"
+            f"📝 Приоритет: {info['priority']}\n"
+            f"🏆 Баллы: {info['score']}\n"
+        )
+        if info['inside']:
+            msg += "🎉 Поздравляю! Ты проходишь!"
+        else:
+            msg += "⏳ Пока не проходишь."
+
+        return [msg]
+    return []
 
 
 def find_user_info(html):
@@ -306,12 +326,6 @@ def dvfu_check_all_majors(driver, wait, user_id):
         except Exception as e:
             print(f"[DVFU] ❌ Ошибка при направлении {major_to_select}:", e)
 
-    # Telegram
-    full_message = "\n\n".join(all_messages)
-    if full_message:
-        for chat_id in USER_CHAT_IDS:
-            bot.send_message(chat_id, full_message)
-
     return all_messages
 
 
@@ -464,8 +478,10 @@ def parse_urfu_all_majors(driver, wait, user_id):
 
             print(f"[URFU:all] ✅ Найдено направление: {direction}, позиция среди 'Да': {position}/{plan}")
 
+
     except Exception as e:
         print("[URFU:all] ❌ Ошибка при парсинге всех направлений:", e)
+        return []
 
     return messages
 
@@ -496,12 +512,15 @@ def run():
         all_messages.extend(dvfu_messages)
 
         print("▶️ Запуск проверки УрФУ (основной рейтинг)...")
-        urfu_all_majors_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID)
+        urfu_all_majors_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID) or []
         all_messages.extend(urfu_all_majors_messages)
 
         print("▶️ Запуск проверки УрФУ (оперативный рейтинг)...")
         urfu_today_messages = parse_urfu_today(driver, wait, USER_UNIQUE_ID)
-        all_messages.extend(urfu_today_messages)
+        if isinstance(urfu_today_messages, list):
+            all_messages.extend(urfu_today_messages)
+        else:
+            print("⚠️ parse_urfu_today вернул не список, игнорируем.")
 
         if not all_messages:
             print("❌ Ни один рейтинг не содержит нужного ID.")
