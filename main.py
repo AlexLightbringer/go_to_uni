@@ -31,6 +31,7 @@ URLS_TO_CHECK = [
     "https://urfu.ru/ru/ratings/"
 ]
 
+
 def check_pages_access(urls):
     all_ok = True
     for url in urls:
@@ -44,6 +45,7 @@ def check_pages_access(urls):
             print(f"Ошибка при доступе к странице {url}: {e}")
             all_ok = False
     return all_ok
+
 
 def parse_urfu_today(driver, wait, user_id):
     chrome_options = Options()
@@ -99,72 +101,108 @@ def parse_urfu_today(driver, wait, user_id):
     if not html:
         return []
 
-    info = find_user_info(html)
-    if info:
+    infos = find_user_info(html)
+    messages = []
+    for info in infos:
         msg = (
             f"📊 УРФУ Оперативный рейтинг\n"
-            f"ID: {info['id'] if 'id' in info else user_id}\n"
+            f"ID: {info['id']}\n"
             f"🏫 Направление: {info['direction']}\n\n"
             f"📍 Позиция: {info['position']} / {info['plan']}\n"
             f"📩 Согласие: {info['consent']}\n"
             f"📝 Приоритет: {info['priority']}\n"
             f"🏆 Баллы: {info['score']}\n"
         )
-        if info['inside']:
-            msg += "🎉 Поздравляю! Ты проходишь!"
-        else:
-            msg += "⏳ Пока не проходишь."
+        msg += "🎉 Поздравляю! Ты проходишь!"
+        messages.append(msg)
 
-        return [msg]
-    return []
+    return messages
 
 
 def find_user_info(html):
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.select("table.supp")
 
-    user_info = None
+    results = []
+
     for i in range(len(tables)):
         header = tables[i]
         if "Основные места в рамках КЦП" not in header.text:
             continue
 
-        plan = 0
-        direction = ""
         try:
             plan_text = header.find("th", string="План приема").find_next_sibling("td").text.strip()
             plan = int(plan_text)
-        except Exception:
-            pass
+        except:
+            continue
 
         try:
             direction = header.find("th", string=re.compile("Направление")).find_next_sibling("td").text.strip()
-        except Exception:
-            direction = ""
+        except:
+            direction = "Неизвестное направление"
 
-        if i + 1 < len(tables):
-            data_table = tables[i + 1]
-            rows = data_table.find_all("tr")[1:]
-            for pos, row in enumerate(rows, start=1):
-                cols = row.find_all("td")
-                if len(cols) < 2:
-                    continue
-                ab_id = cols[1].get_text(strip=True)
-                if ab_id == USER_UNIQUE_ID:
-                    consent = cols[2].get_text(strip=True)
-                    priority = cols[3].get_text(strip=True)
-                    score = cols[-2].get_text(strip=True)
-                    user_info = {
-                        "position": pos,
-                        "consent": consent,
-                        "priority": priority,
-                        "score": score,
-                        "plan": plan,
-                        "inside": pos <= plan,
-                        "direction": direction
-                    }
-                    return user_info
-    return None
+        if i + 1 >= len(tables):
+            continue
+
+        data_table = tables[i + 1]
+        rows = data_table.find_all("tr")[1:]
+
+        user_score = None
+        user_priority = None
+        user_consent = None
+        found_row = None
+
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 2:
+                continue
+            ab_id = cols[1].get_text(strip=True)
+            if ab_id == USER_UNIQUE_ID:
+                found_row = row
+                user_consent = cols[2].get_text(strip=True)
+                user_priority = cols[3].get_text(strip=True)
+                try:
+                    user_score = int(cols[-2].get_text(strip=True))
+                except:
+                    user_score = 0
+                break
+
+        if not found_row:
+            continue
+
+        position = 1
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 2:
+                continue
+            consent = cols[2].get_text(strip=True)
+            if consent != "Да":
+                continue
+            try:
+                score = int(cols[-2].get_text(strip=True))
+            except:
+                continue
+            if score > user_score:
+                position += 1
+            elif score == user_score:
+                other_id = cols[1].get_text(strip=True)
+                if other_id != USER_UNIQUE_ID:
+                    position += 1
+
+        inside = position <= plan
+        if inside:
+            results.append({
+                "id": USER_UNIQUE_ID,
+                "position": position,
+                "consent": user_consent,
+                "priority": user_priority,
+                "score": user_score,
+                "plan": plan,
+                "inside": inside,
+                "direction": direction
+            })
+
+    return results
 
 
 MAJORS_TO_CHECK = [
@@ -537,7 +575,6 @@ def run():
         print("❌ Общая ошибка во время выполнения run():", e)
     finally:
         driver.quit()
-
 
 
 if __name__ == "__main__":
