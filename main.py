@@ -13,13 +13,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
+from dotenv import load_dotenv
+import os
 
 
 # === Конфигурация ===
 # Telegram-бот
-BOT_TOKEN = "6041548049:AAEvExz7ykJOTwWF2crh0oaDfGe7r8j1lFU"
-USER_UNIQUE_ID = "3572733"
-USER_CHAT_IDS = ["901147319", "6720399641"]
+load_dotenv()  # Загружает переменные из .env
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+USER_UNIQUE_ID = os.getenv("USER_UNIQUE_ID")
+USER_CHAT_IDS = os.getenv("USER_CHAT_IDS").split(",")  # список строк
 
 # URL'ы для проверки доступности
 URL = "https://urfu.ru/ru/ratings-today/"
