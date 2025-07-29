@@ -16,7 +16,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 # === Настройки ===
 BOT_TOKEN = "6041548049:AAEvExz7ykJOTwWF2crh0oaDfGe7r8j1lFU"
 USER_UNIQUE_ID = "3572733"
-USER_CHAT_ID = 901147319
+USER_CHAT_IDS = ["901147319", "6720399641"]
 URL = "https://urfu.ru/ru/ratings-today/"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -28,7 +28,8 @@ last_message = None       # Для отслеживания последнего
 
 URLS_TO_CHECK = [
     "https://urfu.ru/ru/ratings-today/",
-    "https://www.dvfu.ru/admission/spd/"
+    "https://www.dvfu.ru/admission/spd/",
+    "https://urfu.ru/ru/ratings/"
 ]
 
 def check_pages_access(urls):
@@ -98,6 +99,7 @@ def parse_with_selenium():
 
     return html
 
+
 def find_user_info(html):
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.select("table.supp")
@@ -144,7 +146,9 @@ def find_user_info(html):
                     }
                     return user_info
     return None
-DIRECTIONS_TO_CHECK = [
+
+
+MAJORS_TO_CHECK = [
     "45.05.01 Перевод и переводоведение",
     "58.03.01 Востоковедение и африканистика",
     "45.03.02 Лингвистика (Перевод и переводоведение (европейские языки))",
@@ -155,13 +159,14 @@ DIRECTIONS_TO_CHECK = [
     "44.03.05 Педагогическое образование (с двумя профилями подготовки) (Иностранный язык (английский) и Иностранный язык (китайский))",
 ]
 
-def dvfu_check_all_directions(driver, wait, user_id):
+
+def dvfu_check_all_majors(driver, wait, user_id):
 
     all_messages = []
 
-    for direction_to_select in DIRECTIONS_TO_CHECK:
+    for major_to_select in MAJORS_TO_CHECK:
         try:
-            print(f"[DVFU] 🔍 Проверка направления: {direction_to_select}")
+            print(f"[DVFU] 🔍 Проверка направления: {major_to_select}")
             driver.get("https://www.dvfu.ru/admission/spd/")
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
 
@@ -180,8 +185,8 @@ def dvfu_check_all_directions(driver, wait, user_id):
                     Select(selects[i]).select_by_visible_text("Очная")
                     print("✅ Выбрано: Очная")
                 elif i == 3:
-                    Select(selects[i]).select_by_visible_text(direction_to_select)
-                    print(f"✅ Выбрано направление: {direction_to_select}")
+                    Select(selects[i]).select_by_visible_text(major_to_select)
+                    print(f"✅ Выбрано направление: {major_to_select}")
                 elif i == 4:
                     Select(selects[i]).select_by_visible_text("По сумме баллов")
                     print("✅ Сортировка: По сумме баллов")
@@ -199,7 +204,7 @@ def dvfu_check_all_directions(driver, wait, user_id):
                     break
                 block_row = block_row.find_next("tr", class_="block-header")
             else:
-                print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {direction_to_select}")
+                print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {major_to_select}")
                 continue
 
             # Квота
@@ -217,7 +222,7 @@ def dvfu_check_all_directions(driver, wait, user_id):
                 table = table.find_next_sibling("tr")
 
             if not table:
-                print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {direction_to_select}")
+                print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {major_to_select}")
                 continue
 
             # Найдём все строки до следующего заголовка
@@ -285,7 +290,7 @@ def dvfu_check_all_directions(driver, wait, user_id):
             message = (
                 f"📊 ДВФУ Рейтинг\n"
                 f"ID: {user_id}\n"
-                f"🏫 Направление: {direction_to_select}\n\n"
+                f"🏫 Направление: {major_to_select}\n\n"
                 f"📍 Позиция: {passed_count} / {quota_number}\n"
                 f"📩 Согласие: {consent}\n"
                 f"📝 Приоритет: {priority}\n"
@@ -300,12 +305,13 @@ def dvfu_check_all_directions(driver, wait, user_id):
             all_messages.append(message)
 
         except Exception as e:
-            print(f"[DVFU] ❌ Ошибка при направлении {direction_to_select}:", e)
+            print(f"[DVFU] ❌ Ошибка при направлении {major_to_select}:", e)
 
     # Telegram
     full_message = "\n\n".join(all_messages)
     if full_message:
-        bot.send_message(USER_CHAT_ID, full_message)
+        for chat_id in USER_CHAT_IDS:
+            bot.send_message(chat_id, ...)
 
 
 def send_telegram(info):
@@ -325,53 +331,198 @@ def send_telegram(info):
         message += "\n🎉 Поздравляю! Ты поступил!"
 
     if message != last_message:
-        bot.send_message(USER_CHAT_ID, message)
+        for chat_id in USER_CHAT_IDS:
+            bot.send_message(chat_id, ...)
         print("[INFO] Отправлено сообщение в Telegram.")
         last_message = message
     else:
         print("[INFO] Без изменений — сообщение не отправлялось.")
 
+
+def parse_urfu_all_majors(driver, wait, user_id):
+    messages = []
+
+    try:
+        print("[URFU:all] Загружаем страницу рейтингов по всем направлениям...")
+        driver.get("https://urfu.ru/ru/ratings/")
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.menu-departments")))
+
+        rows = driver.find_elements(By.CSS_SELECTOR, "table.menu-departments tr")
+        found = False
+        for row in rows:
+            cells = row.find_elements(By.TAG_NAME, "td")
+            if len(cells) < 2:
+                continue
+            if "Уральский гуманитарный институт" in cells[0].text:
+                links = cells[1].find_elements(By.TAG_NAME, "a")
+                for link in links:
+                    if "Очная" in link.text:
+                        print("[URFU:all] Переход к рейтингу 'Очная' формы...")
+                        driver.execute_script("arguments[0].click();", link)
+                        found = True
+                        break
+            if found:
+                break
+
+        if not found:
+            print("❌ Гуманитарный институт 'Очная' не найден.")
+            return messages
+
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.supp")))
+        print("[URFU:all] Загружены таблицы рейтингов, начинаем анализ...")
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        tables = soup.select("table.supp")
+
+        for i in range(len(tables)):
+            header = tables[i]
+            if "Основные места в рамках КЦП" not in header.text:
+                continue
+
+            try:
+                plan_text = header.find("th", string="План приема").find_next_sibling("td").text.strip()
+                plan = int(plan_text)
+            except:
+                continue
+
+            try:
+                direction = header.find("th", string=re.compile("Направление")).find_next_sibling("td").text.strip()
+            except:
+                direction = "Неизвестное направление"
+
+            if i + 1 >= len(tables):
+                continue
+
+            data_table = tables[i + 1]
+            rows = data_table.find_all("tr")[1:]
+
+            user_score = None
+            user_priority = None
+            user_consent = None
+            found_row = None
+
+            # Найдём строку пользователя + сохраним баллы
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) < 2:
+                    continue
+                ab_id = cols[1].get_text(strip=True)
+                if ab_id == user_id:
+                    found_row = row
+                    user_consent = cols[2].get_text(strip=True)
+                    user_priority = cols[3].get_text(strip=True)
+                    try:
+                        user_score = int(cols[-2].get_text(strip=True))
+                    except:
+                        user_score = 0
+                    break
+
+            if not found_row:
+                continue  # этот рейтинг — не для нас
+
+            # Теперь посчитаем позицию среди "Да"
+            position = 1
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) < 2:
+                    continue
+                consent = cols[2].get_text(strip=True)
+                if consent != "Да":
+                    continue
+                try:
+                    score = int(cols[-2].get_text(strip=True))
+                except:
+                    continue
+                if score > user_score:
+                    position += 1
+                elif score == user_score:
+                    # Если баллы равны — пропустить ID, совпадающий с пользователем
+                    other_id = cols[1].get_text(strip=True)
+                    if other_id != user_id:
+                        position += 1
+
+            inside = position <= plan
+
+            status_line = (
+                f"🎉 Поздравляю! Ты проходишь! До тебя занято мест: {position - 1} из {plan}"
+                if inside else
+                f"⏳ Пока не проходишь. До тебя уже занято мест: {position} из {plan}"
+            )
+
+            msg = (
+                f"📊 УрФУ Рейтинг (все направления)\n"
+                f"ID: {user_id}\n"
+                f"🏫 Направление: {direction}\n\n"
+                f"📍 Позиция среди подавших согласие: {position} / {plan}\n"
+                f"📩 Согласие: {user_consent}\n"
+                f"📝 Приоритет: {user_priority}\n"
+                f"🏆 Баллы: {user_score}\n"
+                f"{status_line}"
+            )
+            messages.append(msg)
+
+            print(f"[URFU:all] ✅ Найдено направление: {direction}, позиция среди 'Да': {position}/{plan}")
+
+    except Exception as e:
+        print("[URFU:all] ❌ Ошибка при парсинге всех направлений:", e)
+
+    return messages
+
+
 def run():
-    print("[INFO] Запуск проверки УРФУ и ДВФУ...")
+    print("[INFO] Запуск проверки рейтингов УрФУ и ДВФУ...")
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
 
-    # 🔧 Используем ChromeDriverManager для Railway
-    service = ChromeService(executable_path=ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
     try:
         while True:
             try:
                 if not check_pages_access(URLS_TO_CHECK):
-                    print("[WARNING] Один или несколько сайтов недоступны. Ждём 5 минут...")
+                    print("[WARNING] Один или несколько сайтов недоступны. Повторим через 5 минут...")
                     time.sleep(300)
                     continue
 
+                # 1. Основной рейтинг УрФУ (https://urfu.ru/ru/ratings-today/)
                 html = parse_with_selenium()
                 if not html:
-                    print("❌ Не удалось загрузить страницу с результатами УрФУ.")
-                    time.sleep(300)
-                    continue
-
-                user_info = find_user_info(html)
-                if user_info:
-                    send_telegram(user_info)
-                    dvfu_check_all_directions(driver, wait, USER_UNIQUE_ID)
+                    print("❌ Не удалось загрузить страницу рейтинга УрФУ.")
                 else:
-                    print("⚠️ Абитуриент не найден в таблице УрФУ.")
-                    bot.send_message(USER_CHAT_ID, "⚠️ Абитуриент не найден в таблице УрФУ.")
-            except Exception as e:
-                print("[ERROR]", e)
+                    user_info = find_user_info(html)
+                    if user_info:
+                        send_telegram(user_info)
+                    else:
+                        print("⚠️ Абитуриент не найден на https://urfu.ru/ru/ratings-today/")
+                        for chat_id in USER_CHAT_IDS:
+                            bot.send_message(chat_id, "⚠️ Абитуриент не найден в таблице УрФУ (основной рейтинг).")
 
+                # 2. Проверка всех направлений УрФУ (https://urfu.ru/ru/ratings/)
+                print("[INFO] Проверка всех направлений УрФУ...")
+                urfu_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID)
+                if urfu_messages:
+                    print(f"[INFO] Найдено направлений УрФУ: {len(urfu_messages)}")
+                    for chat_id in USER_CHAT_IDS:
+                        bot.send_message(chat_id, "\n\n".join(urfu_messages))
+                else:
+                    print("[INFO] Абитуриент не найден ни в одном направлении на https://urfu.ru/ru/ratings/")
+
+                # 3. Проверка направлений ДВФУ
+                print("[INFO] Проверка направлений ДВФУ...")
+                dvfu_check_all_majors(driver, wait, USER_UNIQUE_ID)
+
+            except Exception as e:
+                print("[ERROR] В ходе проверки возникла ошибка:", e)
+
+            print("[INFO] Ожидание следующего запуска через 1 час...")
             time.sleep(3600)
 
     finally:
         driver.quit()
 
+
 if __name__ == "__main__":
     run()
-
