@@ -1,3 +1,5 @@
+# --- Импорт внешних зависимостей ---
+# Основные библиотеки для работы с HTTP, HTML-парсингом, Telegram и Selenium
 import re
 import time
 import requests
@@ -12,27 +14,33 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
-# === Настройки ===
+
+# === Конфигурация ===
+# Telegram-бот
 BOT_TOKEN = "6041548049:AAEvExz7ykJOTwWF2crh0oaDfGe7r8j1lFU"
 USER_UNIQUE_ID = "3572733"
 USER_CHAT_IDS = ["901147319", "6720399641"]
+
+# URL'ы для проверки доступности
 URL = "https://urfu.ru/ru/ratings-today/"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-MAX_RETRIES = 3           # Максимальное число попыток загрузки страницы
-WAIT_TIMEOUT = 120        # Таймаут ожидания элементов на странице (секунд)
-
-bot = telebot.TeleBot(BOT_TOKEN)
-last_message = None       # Для отслеживания последнего отправленного сообщения
-
 URLS_TO_CHECK = [
     "https://urfu.ru/ru/ratings-today/",
     "https://www.dvfu.ru/admission/spd/",
     "https://urfu.ru/ru/ratings/"
 ]
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+# Поведение парсера
+MAX_RETRIES = 3           # Максимальное число повторов при ошибках загрузки
+WAIT_TIMEOUT = 120        # Максимальное ожидание элементов в DOM (секунды)
+
+# Инициализация Telegram-бота
+bot = telebot.TeleBot(BOT_TOKEN)
+last_message = None  # Последнее отправленное сообщение для анти-спама
 
 
 def check_pages_access(urls):
+    """Проверка доступности всех целевых страниц."""
     all_ok = True
     for url in urls:
         try:
@@ -48,11 +56,15 @@ def check_pages_access(urls):
 
 
 def parse_urfu_today(driver, wait, user_id):
+    """
+    Парсит оперативный рейтинг УрФУ, находит нужного абитуриента по ID
+    и извлекает его позицию, баллы, согласие и приоритет.
+    """
+    # Переинициализируем headless-драйвер (важно для изоляции между вызовами)
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
-
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
@@ -63,9 +75,11 @@ def parse_urfu_today(driver, wait, user_id):
             driver.get(URL)
 
             try:
+                # Ожидаем таблицу направлений
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.menu-departments")))
                 rows = driver.find_elements(By.CSS_SELECTOR, "table.menu-departments tr")
 
+                # Ищем "Уральский гуманитарный институт" -> Очная форма
                 found = False
                 for row in rows:
                     cells = row.find_elements(By.TAG_NAME, "td")
@@ -86,6 +100,7 @@ def parse_urfu_today(driver, wait, user_id):
                     print("❌ Институт/форма обучения не найдены.")
                     continue
 
+                # Ждём появления нужного ID абитуриента
                 wait.until(EC.presence_of_element_located((By.XPATH, f"//td[text()='{USER_UNIQUE_ID}']")))
                 print("✅ ID абитуриента найден на странице")
                 html = driver.page_source
@@ -101,6 +116,7 @@ def parse_urfu_today(driver, wait, user_id):
     if not html:
         return []
 
+    # Парсим таблицы и формируем сообщения
     infos = find_user_info(html)
     messages = []
     for info in infos:
@@ -120,9 +136,12 @@ def parse_urfu_today(driver, wait, user_id):
 
 
 def find_user_info(html):
+    """
+    Извлекает из HTML-таблиц все рейтинги, в которых фигурирует пользователь.
+    Сравнивает баллы и определяет позицию среди подавших согласие.
+    """
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.select("table.supp")
-
     results = []
 
     for i in range(len(tables)):
@@ -130,17 +149,20 @@ def find_user_info(html):
         if "Основные места в рамках КЦП" not in header.text:
             continue
 
+        # Извлекаем план приёма
         try:
             plan_text = header.find("th", string="План приема").find_next_sibling("td").text.strip()
             plan = int(plan_text)
         except:
             continue
 
+        # Извлекаем направление
         try:
             direction = header.find("th", string=re.compile("Направление")).find_next_sibling("td").text.strip()
         except:
             direction = "Неизвестное направление"
 
+        # Получаем таблицу рейтинга
         if i + 1 >= len(tables):
             continue
 
@@ -152,6 +174,7 @@ def find_user_info(html):
         user_consent = None
         found_row = None
 
+        # Поиск строки пользователя
         for row in rows:
             cols = row.find_all("td")
             if len(cols) < 2:
@@ -170,6 +193,7 @@ def find_user_info(html):
         if not found_row:
             continue
 
+        # Расчёт позиции среди подавших согласие
         position = 1
         for row in rows:
             cols = row.find_all("td")
@@ -204,7 +228,6 @@ def find_user_info(html):
 
     return results
 
-
 MAJORS_TO_CHECK = [
     "45.05.01 Перевод и переводоведение",
     "58.03.01 Востоковедение и африканистика",
@@ -218,6 +241,10 @@ MAJORS_TO_CHECK = [
 
 
 def dvfu_check_all_majors(driver, wait, user_id):
+    """
+    Проходит по каждому направлению в ДВФУ, применяет фильтры, парсит таблицу "Общий конкурс",
+    находит абитуриента по ID и определяет, входит ли он в квоту.
+    """
     all_messages = []
 
     for major_to_select in MAJORS_TO_CHECK:
@@ -227,6 +254,7 @@ def dvfu_check_all_majors(driver, wait, user_id):
                 driver.get("https://www.dvfu.ru/admission/spd/")
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
 
+                # Последовательно выбираем значения в выпадающих списках фильтра
                 for i in range(5):
                     wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")) >= i + 1)
                     selects = driver.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")
@@ -242,11 +270,13 @@ def dvfu_check_all_majors(driver, wait, user_id):
                     elif i == 4:
                         Select(selects[i]).select_by_visible_text("По сумме баллов")
 
+                # Отправляем фильтр
                 driver.find_element(By.CSS_SELECTOR, "input.btn.btn-primary[value='Показать']").click()
                 wait.until(lambda d: "Общий конкурс" in d.page_source)
 
                 soup = BeautifulSoup(driver.page_source, "html.parser")
 
+                # Ищем нужный блок "Общий конкурс"
                 block_row = soup.find("tr", class_="block-header")
                 while block_row:
                     h4 = block_row.find("h4")
@@ -255,8 +285,9 @@ def dvfu_check_all_majors(driver, wait, user_id):
                     block_row = block_row.find_next("tr", class_="block-header")
                 else:
                     print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {major_to_select}")
-                    break  # выходим из попыток
+                    break
 
+                # Получаем квоту с места
                 quota_number = 0
                 small = block_row.find("small")
                 if small:
@@ -264,14 +295,16 @@ def dvfu_check_all_majors(driver, wait, user_id):
                     if match:
                         quota_number = int(match.group(1))
 
+                # Переходим к таблице рейтинга
                 table = block_row.find_next_sibling("tr")
                 while table and not table.find_all("td"):
                     table = table.find_next_sibling("tr")
 
                 if not table:
-                    print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {major_to_select}")
-                    break  # выходим из попыток
+                    print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс'")
+                    break
 
+                # Собираем строки таблицы с данными
                 data_rows = []
                 row = table
                 while row and not row.get("class") == ["block-header"]:
@@ -279,6 +312,7 @@ def dvfu_check_all_majors(driver, wait, user_id):
                         data_rows.append(row)
                     row = row.find_next_sibling("tr")
 
+                # Ищем строку пользователя
                 my_row = None
                 my_index = None
                 passed_count = 0
@@ -291,15 +325,17 @@ def dvfu_check_all_majors(driver, wait, user_id):
                         break
 
                 if my_row is None:
-                    print(f"[DVFU] ❌ Абитуриент с ID {user_id} не найден в 'Общий конкурс'")
-                    break  # выходим из попыток
+                    print(f"[DVFU] ❌ Абитуриент с ID {user_id} не найден")
+                    break
 
+                # Позиция по индексу или значению
                 position_td = my_row.find("td")
                 if position_td and position_td.text.strip().isdigit():
                     position = int(position_td.text.strip())
                 else:
                     position = my_index + 1
 
+                # Считаем количество поступающих выше по приоритету и согласию
                 for r in data_rows[:my_index]:
                     collapse = r.find("div", class_="collapse")
                     if collapse:
@@ -307,6 +343,7 @@ def dvfu_check_all_majors(driver, wait, user_id):
                         if "Согласие на зачисление: Да" in text and "Проходной высший приоритет: Да" in text:
                             passed_count += 1
 
+                # Извлекаем дополнительные параметры из своей строки
                 user_td = my_row.find("td", class_="text-left")
                 collapse = user_td.find("div", class_="collapse") if user_td else None
                 consent = "Нет"
@@ -328,6 +365,7 @@ def dvfu_check_all_majors(driver, wait, user_id):
                             if match:
                                 priority = match.group(1)
 
+                # Формируем Telegram-сообщение
                 message = (
                     f"📊 ДВФУ Рейтинг\n"
                     f"ID: {user_id}\n"
@@ -344,7 +382,7 @@ def dvfu_check_all_majors(driver, wait, user_id):
                     message += f"⏳ Пока не проходишь. До тебя уже занято мест: {passed_count} из {quota_number}"
 
                 all_messages.append(message)
-                break  # успешная попытка, выходим из retry
+                break  # Успешная попытка, прерываем retries
 
             except Exception as e:
                 print(f"[DVFU] ❌ Ошибка при попытке #{attempt} для {major_to_select}: {e}")
@@ -355,8 +393,12 @@ def dvfu_check_all_majors(driver, wait, user_id):
 
 
 def send_telegram(info):
+    """
+    Отправляет информацию о рейтинге в Telegram, если сообщение отличается от предыдущего.
+    """
     global last_message
     inside_str = "✅ ВХОДИТ В КОНКУРС!" if info['inside'] else "❌ НЕ ВХОДИТ в конкурс"
+
     message = (
         f"📊 УРФУ Рейтинг\n"
         f"ID: {USER_UNIQUE_ID}\n"
@@ -380,6 +422,16 @@ def send_telegram(info):
 
 
 def parse_urfu_all_majors(driver, wait, user_id):
+    """
+    Парсит рейтинг поступающих по всем направлениям (очная форма обучения)
+    на странице https://urfu.ru/ru/ratings/ и определяет позицию абитуриента
+    по ID с учётом согласия на зачисление.
+
+    :param driver: экземпляр Selenium WebDriver
+    :param wait: экземпляр WebDriverWait
+    :param user_id: уникальный ID абитуриента
+    :return: список сообщений по направлениям, где найден абитуриент
+    """
     messages = []
 
     try:
@@ -387,6 +439,7 @@ def parse_urfu_all_majors(driver, wait, user_id):
         driver.get("https://urfu.ru/ru/ratings/")
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.menu-departments")))
 
+        # Переход к "Уральский гуманитарный институт", форма "Очная"
         rows = driver.find_elements(By.CSS_SELECTOR, "table.menu-departments tr")
         found = False
         for row in rows:
@@ -408,6 +461,7 @@ def parse_urfu_all_majors(driver, wait, user_id):
             print("❌ Гуманитарный институт 'Очная' не найден.")
             return messages
 
+        # Ждём появления таблиц рейтингов
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.supp")))
         print("[URFU:all] Загружены таблицы рейтингов, начинаем анализ...")
 
@@ -419,29 +473,31 @@ def parse_urfu_all_majors(driver, wait, user_id):
             if "Основные места в рамках КЦП" not in header.text:
                 continue
 
+            # Чтение плана приёма
             try:
                 plan_text = header.find("th", string="План приема").find_next_sibling("td").text.strip()
                 plan = int(plan_text)
             except:
-                continue
+                continue  # пропускаем, если невозможно получить план
 
+            # Чтение направления
             try:
                 direction = header.find("th", string=re.compile("Направление")).find_next_sibling("td").text.strip()
             except:
                 direction = "Неизвестное направление"
 
             if i + 1 >= len(tables):
-                continue
+                continue  # нет таблицы с данными после заголовка
 
             data_table = tables[i + 1]
-            rows = data_table.find_all("tr")[1:]
+            rows = data_table.find_all("tr")[1:]  # пропускаем заголовок
 
             user_score = None
             user_priority = None
             user_consent = None
             found_row = None
 
-            # Найдём строку пользователя + сохраним баллы
+            # Поиск строки абитуриента
             for row in rows:
                 cols = row.find_all("td")
                 if len(cols) < 2:
@@ -458,9 +514,9 @@ def parse_urfu_all_majors(driver, wait, user_id):
                     break
 
             if not found_row:
-                continue  # этот рейтинг — не для нас
+                continue  # не найден в этом направлении
 
-            # Теперь посчитаем позицию среди "Да"
+            # Подсчёт позиции среди абитуриентов с согласием
             position = 1
             for row in rows:
                 cols = row.find_all("td")
@@ -476,7 +532,6 @@ def parse_urfu_all_majors(driver, wait, user_id):
                 if score > user_score:
                     position += 1
                 elif score == user_score:
-                    # Если баллы равны — пропустить ID, совпадающий с пользователем
                     other_id = cols[1].get_text(strip=True)
                     if other_id != user_id:
                         position += 1
@@ -503,7 +558,6 @@ def parse_urfu_all_majors(driver, wait, user_id):
 
             print(f"[URFU:all] ✅ Найдено направление: {direction}, позиция среди 'Да': {position}/{plan}")
 
-
     except Exception as e:
         print("[URFU:all] ❌ Ошибка при парсинге всех направлений:", e)
         return []
@@ -512,8 +566,15 @@ def parse_urfu_all_majors(driver, wait, user_id):
 
 
 def run():
+    """
+    Точка входа. Последовательно выполняет:
+    - Проверку доступности сайтов
+    - Парсинг ДВФУ, УрФУ (все направления), УрФУ (оперативный рейтинг)
+    - Отправку сообщений в Telegram по категориям
+    """
     check_pages_access(URLS_TO_CHECK)
 
+    # Инициализация Selenium-драйвера
     options = webdriver.ChromeOptions()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
@@ -531,7 +592,7 @@ def run():
         print("▶️ Запуск проверки УрФУ (оперативный рейтинг)...")
         urfu_today_messages = parse_urfu_today(driver, wait, USER_UNIQUE_ID)
 
-        # Отправка по категориям
+        # Отправка результатов по категориям в Telegram
         if dvfu_messages:
             dvfu_block = "📚 Все направления ДВФУ:\n\n" + "\n\n".join(dvfu_messages)
             for chat_id in USER_CHAT_IDS:
@@ -556,6 +617,7 @@ def run():
         driver.quit()
 
 
+# Циклический запуск — каждые 60 минут
 if __name__ == "__main__":
     while True:
         print("⏰ Запуск проверки...")
