@@ -218,151 +218,138 @@ MAJORS_TO_CHECK = [
 
 
 def dvfu_check_all_majors(driver, wait, user_id):
-
     all_messages = []
 
     for major_to_select in MAJORS_TO_CHECK:
-        try:
-            print(f"[DVFU] 🔍 Проверка направления: {major_to_select}")
-            driver.get("https://www.dvfu.ru/admission/spd/")
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                print(f"[DVFU] 🔍 Попытка #{attempt} — Проверка направления: {major_to_select}")
+                driver.get("https://www.dvfu.ru/admission/spd/")
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form[name='arrFilter']")))
 
-            # Обновлённая логика селектов — пошаговая загрузка
-            for i in range(5):
-                wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")) >= i + 1)
-                selects = driver.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")
+                for i in range(5):
+                    wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")) >= i + 1)
+                    selects = driver.find_elements(By.CSS_SELECTOR, "form[name='arrFilter'] select")
 
-                if i == 0:
-                    Select(selects[i]).select_by_visible_text("Бакалавриат/Специалитет")
-                    print("✅ Выбрано: Бакалавриат/Специалитет")
-                elif i == 1:
-                    Select(selects[i]).select_by_visible_text("Бюджет")
-                    print("✅ Выбрано: Бюджет")
-                elif i == 2:
-                    Select(selects[i]).select_by_visible_text("Очная")
-                    print("✅ Выбрано: Очная")
-                elif i == 3:
-                    Select(selects[i]).select_by_visible_text(major_to_select)
-                    print(f"✅ Выбрано направление: {major_to_select}")
-                elif i == 4:
-                    Select(selects[i]).select_by_visible_text("По сумме баллов")
-                    print("✅ Сортировка: По сумме баллов")
+                    if i == 0:
+                        Select(selects[i]).select_by_visible_text("Бакалавриат/Специалитет")
+                    elif i == 1:
+                        Select(selects[i]).select_by_visible_text("Бюджет")
+                    elif i == 2:
+                        Select(selects[i]).select_by_visible_text("Очная")
+                    elif i == 3:
+                        Select(selects[i]).select_by_visible_text(major_to_select)
+                    elif i == 4:
+                        Select(selects[i]).select_by_visible_text("По сумме баллов")
 
-            driver.find_element(By.CSS_SELECTOR, "input.btn.btn-primary[value='Показать']").click()
-            wait.until(lambda d: "Общий конкурс" in d.page_source)
+                driver.find_element(By.CSS_SELECTOR, "input.btn.btn-primary[value='Показать']").click()
+                wait.until(lambda d: "Общий конкурс" in d.page_source)
 
-            soup = BeautifulSoup(driver.page_source, "html.parser")
+                soup = BeautifulSoup(driver.page_source, "html.parser")
 
-            # Поиск строки с заголовком "Общий конкурс"
-            block_row = soup.find("tr", class_="block-header")
-            while block_row:
-                h4 = block_row.find("h4")
-                if h4 and h4.get_text(strip=True) == "Общий конкурс":
-                    break
-                block_row = block_row.find_next("tr", class_="block-header")
-            else:
-                print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {major_to_select}")
-                continue
+                block_row = soup.find("tr", class_="block-header")
+                while block_row:
+                    h4 = block_row.find("h4")
+                    if h4 and h4.get_text(strip=True) == "Общий конкурс":
+                        break
+                    block_row = block_row.find_next("tr", class_="block-header")
+                else:
+                    print(f"[DVFU] ⚠️ Не найден блок 'Общий конкурс' для направления: {major_to_select}")
+                    break  # выходим из попыток
 
-            # Квота
-            quota_number = 0
-            small = block_row.find("small")
-            if small:
-                quota_text = small.get_text()
-                match = re.search(r"Квота:\s*(\d+)", quota_text)
-                if match:
-                    quota_number = int(match.group(1))
+                quota_number = 0
+                small = block_row.find("small")
+                if small:
+                    match = re.search(r"Квота:\s*(\d+)", small.get_text())
+                    if match:
+                        quota_number = int(match.group(1))
 
-            # Следующая таблица после заголовка
-            table = block_row.find_next_sibling("tr")
-            while table and not table.find_all("td"):
-                table = table.find_next_sibling("tr")
+                table = block_row.find_next_sibling("tr")
+                while table and not table.find_all("td"):
+                    table = table.find_next_sibling("tr")
 
-            if not table:
-                print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {major_to_select}")
-                continue
+                if not table:
+                    print(f"[DVFU] ⚠️ Не найдена таблица под 'Общий конкурс' для направления: {major_to_select}")
+                    break  # выходим из попыток
 
-            # Найдём все строки до следующего заголовка
-            data_rows = []
-            row = table
-            while row and not row.get("class") == ["block-header"]:
-                if row.find("td", class_="text-left"):
-                    data_rows.append(row)
-                row = row.find_next_sibling("tr")
+                data_rows = []
+                row = table
+                while row and not row.get("class") == ["block-header"]:
+                    if row.find("td", class_="text-left"):
+                        data_rows.append(row)
+                    row = row.find_next_sibling("tr")
 
-            td_list = [r.find("td", class_="text-left") for r in data_rows if r.find("td", class_="text-left")]
-            my_row = None
-            my_index = None
-            passed_count = 0
+                my_row = None
+                my_index = None
+                passed_count = 0
 
-            for i, r in enumerate(data_rows):
-                td = r.find("td", class_="text-left")
-                if td and user_id in td.text:
-                    my_row = r
-                    my_index = i
-                    break
+                for i, r in enumerate(data_rows):
+                    td = r.find("td", class_="text-left")
+                    if td and user_id in td.text:
+                        my_row = r
+                        my_index = i
+                        break
 
-            if my_row is None:
-                print(f"[DVFU] ❌ Абитуриент с ID {user_id} не найден в 'Общий конкурс'")
-                continue
+                if my_row is None:
+                    print(f"[DVFU] ❌ Абитуриент с ID {user_id} не найден в 'Общий конкурс'")
+                    break  # выходим из попыток
 
-            # 🎯 Исправленное определение позиции — по первой ячейке (номер строки в таблице)
-            position_td = my_row.find("td")
-            if position_td and position_td.text.strip().isdigit():
-                position = int(position_td.text.strip())
-                print(f"[DVFU] ✅ Абитуриент найден в таблице: позиция {position}")
-            else:
-                print("[DVFU] ⚠️ Не удалось определить позицию по порядковому номеру")
-                position = my_index + 1
+                position_td = my_row.find("td")
+                if position_td and position_td.text.strip().isdigit():
+                    position = int(position_td.text.strip())
+                else:
+                    position = my_index + 1
 
-            # Подсчёт количества людей с согласием и высшим приоритетом до абитуриента
-            for r in data_rows[:my_index]:
-                collapse = r.find("div", class_="collapse")
+                for r in data_rows[:my_index]:
+                    collapse = r.find("div", class_="collapse")
+                    if collapse:
+                        text = collapse.get_text()
+                        if "Согласие на зачисление: Да" in text and "Проходной высший приоритет: Да" in text:
+                            passed_count += 1
+
+                user_td = my_row.find("td", class_="text-left")
+                collapse = user_td.find("div", class_="collapse") if user_td else None
+                consent = "Нет"
+                priority = "Неизвестно"
+                score = "Неизвестно"
+
                 if collapse:
-                    text = collapse.get_text()
-                    if "Согласие на зачисление: Да" in text and "Проходной высший приоритет: Да" in text:
-                        passed_count += 1
+                    paragraphs = collapse.find_all("p")
+                    for p in paragraphs:
+                        text = p.get_text(strip=True)
+                        if "Согласие на зачисление" in text:
+                            consent = "Да" if "Да" in text else "Нет"
+                        elif "Сумма баллов" in text:
+                            match = re.search(r"(\d+)", text)
+                            if match:
+                                score = match.group(1)
+                        elif "Приоритет" in text:
+                            match = re.search(r"(\d+)", text)
+                            if match:
+                                priority = match.group(1)
 
-            user_td = my_row.find("td", class_="text-left")
-            collapse = user_td.find("div", class_="collapse") if user_td else None
-            consent = "Нет"
-            priority = "Неизвестно"
-            score = "Неизвестно"
+                message = (
+                    f"📊 ДВФУ Рейтинг\n"
+                    f"ID: {user_id}\n"
+                    f"🏫 Направление: {major_to_select}\n\n"
+                    f"📍 Позиция: {passed_count} / {quota_number}\n"
+                    f"📩 Согласие: {consent}\n"
+                    f"📝 Приоритет: {priority}\n"
+                    f"🏆 Баллы: {score}\n"
+                )
 
-            if collapse:
-                paragraphs = collapse.find_all("p")
-                for p in paragraphs:
-                    text = p.get_text(strip=True)
-                    if "Согласие на зачисление" in text:
-                        consent = "Да" if "Да" in text else "Нет"
-                    elif "Сумма баллов" in text:
-                        score_match = re.search(r"(\d+)", text)
-                        if score_match:
-                            score = score_match.group(1)
-                    elif "Приоритет" in text:
-                        prio_match = re.search(r"(\d+)", text)
-                        if prio_match:
-                            priority = prio_match.group(1)
+                if passed_count < quota_number:
+                    message += f"🎉 Поздравляю! Ты проходишь! До тебя занято мест: {passed_count - 1} из {quota_number}"
+                else:
+                    message += f"⏳ Пока не проходишь. До тебя уже занято мест: {passed_count} из {quota_number}"
 
-            message = (
-                f"📊 ДВФУ Рейтинг\n"
-                f"ID: {user_id}\n"
-                f"🏫 Направление: {major_to_select}\n\n"
-                f"📍 Позиция: {passed_count} / {quota_number}\n"
-                f"📩 Согласие: {consent}\n"
-                f"📝 Приоритет: {priority}\n"
-                f"🏆 Баллы: {score}\n"
-            )
+                all_messages.append(message)
+                break  # успешная попытка, выходим из retry
 
-            if passed_count < quota_number:
-                message += f"🎉 Поздравляю! Ты проходишь! До тебя занято мест: {passed_count - 1} из {quota_number}"
-            else:
-                message += f"⏳ Пока не проходишь. До тебя уже занято мест: {passed_count} из {quota_number}"
-
-            all_messages.append(message)
-
-        except Exception as e:
-            print(f"[DVFU] ❌ Ошибка при направлении {major_to_select}:", e)
+            except Exception as e:
+                print(f"[DVFU] ❌ Ошибка при попытке #{attempt} для {major_to_select}: {e}")
+                if attempt == MAX_RETRIES:
+                    print(f"[DVFU] ❌ Превышено число попыток для направления: {major_to_select}")
 
     return all_messages
 
@@ -525,15 +512,8 @@ def parse_urfu_all_majors(driver, wait, user_id):
 
 
 def run():
-    # Проверка доступности сайтов
-    urls = [
-        "https://www.dvfu.ru/admission/spd/",
-        "https://urfu.ru/ru/ratings/",
-        "https://urfu.ru/ru/ratings-today/"
-    ]
-    check_pages_access(urls)
+    check_pages_access(URLS_TO_CHECK)
 
-    # Инициализация драйвера
     options = webdriver.ChromeOptions()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
@@ -542,34 +522,33 @@ def run():
     wait = WebDriverWait(driver, 15)
 
     try:
-        # Собираем все сообщения
-        all_messages = []
-
         print("▶️ Запуск проверки направлений ДВФУ...")
-        dvfu_messages = dvfu_check_all_majors(driver, wait, USER_UNIQUE_ID) or []
-        all_messages.extend(dvfu_messages)
+        dvfu_messages = dvfu_check_all_majors(driver, wait, USER_UNIQUE_ID)
 
         print("▶️ Запуск проверки УрФУ (основной рейтинг)...")
-        urfu_all_majors_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID) or []
-        all_messages.extend(urfu_all_majors_messages)
+        urfu_all_majors_messages = parse_urfu_all_majors(driver, wait, USER_UNIQUE_ID)
 
         print("▶️ Запуск проверки УрФУ (оперативный рейтинг)...")
         urfu_today_messages = parse_urfu_today(driver, wait, USER_UNIQUE_ID)
-        if isinstance(urfu_today_messages, list):
-            all_messages.extend(urfu_today_messages)
-        else:
-            print("⚠️ parse_urfu_today вернул не список, игнорируем.")
 
-        if not all_messages:
+        # Отправка по категориям
+        if dvfu_messages:
+            dvfu_block = "📚 Все направления ДВФУ:\n\n" + "\n\n".join(dvfu_messages)
+            for chat_id in USER_CHAT_IDS:
+                bot.send_message(chat_id, dvfu_block)
+
+        if urfu_all_majors_messages:
+            urfu_all_block = "📘 УрФУ (все направления):\n\n" + "\n\n".join(urfu_all_majors_messages)
+            for chat_id in USER_CHAT_IDS:
+                bot.send_message(chat_id, urfu_all_block)
+
+        if urfu_today_messages:
+            urfu_today_block = "⚡ УрФУ (оперативный рейтинг):\n\n" + "\n\n".join(urfu_today_messages)
+            for chat_id in USER_CHAT_IDS:
+                bot.send_message(chat_id, urfu_today_block)
+
+        if not any([dvfu_messages, urfu_all_majors_messages, urfu_today_messages]):
             print("❌ Ни один рейтинг не содержит нужного ID.")
-        else:
-            print(f"📬 Всего сообщений к отправке: {len(all_messages)}")
-            for msg in all_messages:
-                for chat_id in USER_CHAT_IDS:
-                    try:
-                        bot.send_message(chat_id, msg)
-                    except Exception as e:
-                        print(f"❌ Ошибка при отправке в чат {chat_id}: {e}")
 
     except Exception as e:
         print("❌ Общая ошибка во время выполнения run():", e)
