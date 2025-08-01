@@ -6,7 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="d946c41e-ee97-4631-9224-4b02159d7ce4" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -76,12 +76,28 @@
       <workItem from="1753876732786" duration="3126000" />
       <workItem from="1753954984172" duration="5943000" />
       <workItem from="1754014334030" duration="4191000" />
-      <workItem from="1754068056038" duration="4273000" />
+      <workItem from="1754068056038" duration="4922000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="fix(urfu-today): добавлена поддержка множественных вхождений пользователя в таблицах рейтинга" />
+    <MESSAGE value="fix(urfu-today): добавлена поддержка множественных вхождений пользователя в таблицах рейтинга" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix(urfu-today): добавлена поддержка множественных вхождений пользователя в таблицах рейтинга" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/admission_help$main.coverage" NAME="main Coverage Results" MODIFIED="1754071752532" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
