@@ -13,17 +13,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
-from dotenv import load_dotenv
-import os
 
 
 # === Конфигурация ===
 # Telegram-бот
-load_dotenv()  # Загружает переменные из .env
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-USER_UNIQUE_ID = os.getenv("USER_UNIQUE_ID")
-USER_CHAT_IDS = os.getenv("USER_CHAT_IDS").split(",")  # список строк
+BOT_TOKEN = "6041548049:AAEvExz7ykJOTwWF2crh0oaDfGe7r8j1lFU"
+USER_UNIQUE_ID = "3572733"
+USER_CHAT_IDS = ["901147319", "6720399641"]
 
 # URL'ы для проверки доступности
 URL = "https://urfu.ru/ru/ratings-today/"
@@ -118,12 +114,18 @@ def parse_urfu_today(driver, wait, user_id):
         driver.quit()
 
     if not html:
+        print("[DEBUG] HTML не получен, возвращаем пустой список.")
         return []
 
     # Парсим таблицы и формируем сообщения
     infos = find_user_info(html)
+    print(f"[DEBUG] Найдено записей по ID: {len(infos)}")
+    for i in infos:
+        print(f"[DEBUG] Инфо: {i}")
     messages = []
     for info in infos:
+        if not info["inside"]:
+            continue
         msg = (
             f"📊 УРФУ Оперативный рейтинг\n"
             f"ID: {info['id']}\n"
@@ -157,7 +159,8 @@ def find_user_info(html):
         try:
             plan_text = header.find("th", string="План приема").find_next_sibling("td").text.strip()
             plan = int(plan_text)
-        except:
+        except Exception as e:
+            print(f"[ERROR] Не удалось распарсить план приёма: {e}")
             continue
 
         # Извлекаем направление
@@ -173,10 +176,11 @@ def find_user_info(html):
         data_table = tables[i + 1]
         rows = data_table.find_all("tr")[1:]
 
+        # Значения по умолчанию — чтобы не упасть, если пользователя не нашли
         user_score = None
         user_priority = None
         user_consent = None
-        found_row = None
+        position = -1  # -1 = пользователь не найден
 
         # Поиск строки пользователя
         for row in rows:
@@ -185,50 +189,32 @@ def find_user_info(html):
                 continue
             ab_id = cols[1].get_text(strip=True)
             if ab_id == USER_UNIQUE_ID:
-                found_row = row
                 user_consent = cols[2].get_text(strip=True)
                 user_priority = cols[3].get_text(strip=True)
                 try:
                     user_score = int(cols[-2].get_text(strip=True))
-                except:
+                except Exception as e:
+                    print(f"[ERROR] Ошибка при парсинге баллов пользователя: {e}")
                     user_score = 0
+                try:
+                    position = int(cols[0].text.strip())
+                except Exception as e:
+                    print(f"[ERROR] Не удалось распарсить позицию: {e}")
+                    position = -1
                 break
 
-        if not found_row:
-            continue
-
-        # Расчёт позиции среди подавших согласие
-        position = 1
-        for row in rows:
-            cols = row.find_all("td")
-            if len(cols) < 2:
-                continue
-            consent = cols[2].get_text(strip=True)
-            if consent != "Да":
-                continue
-            try:
-                score = int(cols[-2].get_text(strip=True))
-            except:
-                continue
-            if score > user_score:
-                position += 1
-            elif score == user_score:
-                other_id = cols[1].get_text(strip=True)
-                if other_id != USER_UNIQUE_ID:
-                    position += 1
-
-        inside = position <= plan
-        if inside:
-            results.append({
-                "id": USER_UNIQUE_ID,
-                "position": position,
-                "consent": user_consent,
-                "priority": user_priority,
-                "score": user_score,
-                "plan": plan,
-                "inside": inside,
-                "direction": direction
-            })
+        inside = position != -1 and position <= plan
+        print(f"[DEBUG] Результат: {direction} | позиция: {position} | план: {plan} | внутри: {inside}")
+        results.append({
+            "id": USER_UNIQUE_ID,
+            "position": position,
+            "consent": user_consent,
+            "priority": user_priority,
+            "score": user_score,
+            "plan": plan,
+            "inside": inside,
+            "direction": direction
+        })
 
     return results
 
@@ -394,35 +380,6 @@ def dvfu_check_all_majors(driver, wait, user_id):
                     print(f"[DVFU] ❌ Превышено число попыток для направления: {major_to_select}")
 
     return all_messages
-
-
-def send_telegram(info):
-    """
-    Отправляет информацию о рейтинге в Telegram, если сообщение отличается от предыдущего.
-    """
-    global last_message
-    inside_str = "✅ ВХОДИТ В КОНКУРС!" if info['inside'] else "❌ НЕ ВХОДИТ в конкурс"
-
-    message = (
-        f"📊 УРФУ Рейтинг\n"
-        f"ID: {USER_UNIQUE_ID}\n"
-        f"🏫 Направление: {info['direction']}\n\n"
-        f"📍 Позиция: {info['position']} / {info['plan']}\n"
-        f"📩 Согласие: {info['consent']}\n"
-        f"📝 Приоритет: {info['priority']}\n"
-        f"🏆 Баллы: {info['score']}\n"
-        f"{inside_str}"
-    )
-    if info['inside']:
-        message += "\n🎉 Поздравляю! Ты поступил!"
-
-    if message != last_message:
-        for chat_id in USER_CHAT_IDS:
-            bot.send_message(chat_id, message)
-        print("[INFO] Отправлено сообщение в Telegram.")
-        last_message = message
-    else:
-        print("[INFO] Без изменений — сообщение не отправлялось.")
 
 
 def parse_urfu_all_majors(driver, wait, user_id):
